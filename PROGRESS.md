@@ -7,7 +7,7 @@ Foundry + Solidity 0.8.26, `via_ir=true`, OZ v5.6.1, forge-std v1.16.1.
 - [x] **L0 — Oracle & Proof-of-Collateral** ✅ build green, 55 tests pass
 - [x] **L1 — Portfolios: Index + Vault** ✅ build green, 49 tests pass (incl. invariants)
 - [x] **L2 — Leverage & Yield** ✅ build green, 28 tests pass (incl. invariants)
-- [ ] L3 — Structured Products
+- [x] **L3 — Structured Products** ✅ build green, 17 tests pass
 - [ ] L4 — Derivatives
 - [ ] L5 — AI-Agent Vaults
 - [ ] ★ Token Flywheel
@@ -103,3 +103,30 @@ deleverage/repay/close; LeveragedIndex fair deposit/withdraw + closed-form lever
 
 ### TODO(integration)
 - Real Venus vToken / Lista market wiring; real DEX router for deleverage sells.
+
+---
+
+## L3 — Structured Products ✅
+
+| Contract | Status | Notes |
+|---|---|---|
+| `structured/ControlledToken` | ✅ | Controller-minted ERC20 with optional transfer-settle hook |
+| `structured/YieldSplitter` | ✅ | PT/YT split, per-token yield accumulator, maturity redemption |
+| `structured/TrancheVault` | ✅ | Senior/Junior waterfall, coverage ratio, in-kind settlement |
+
+**Tests (17):** PT+YT **reconstruct-the-wrapped-asset invariant** (fuzzed yield) + principal always
+backed; yield accrual/claim; combine; maturity principal redemption; tranche waterfall under
+gain/loss/severe-loss; **senior-priority-over-junior invariant** (fuzzed return); coverage-breach reject.
+
+### Design decisions
+- **In-kind settlement** everywhere: PT/YT and tranche tokens redeem the underlying *portfolio shares*,
+  so structured products never force-sell into the market (consistent with L1's redeem philosophy).
+- YT yield uses a **per-token accumulator** settled on transfer via the ControlledToken hook, so YT is
+  freely transferable while yield follows the pre-transfer holder.
+- `YieldSplitter` assumes a non-decreasing wrapper index (a yield-bearing token), keeping PT principal
+  backed; the reconstruct invariant `underlyingValue == ptValue + ytValue` holds by construction.
+- Tranche waterfall pays **Senior first up to its capped claim**, Junior the residual/first-loss.
+
+### TODO(integration)
+- Origination fee wiring through `FeeManager` (currently structural; waterfall is the tested core).
+- Post-maturity YT yield freeze (currently yield can keep accruing after maturity).
