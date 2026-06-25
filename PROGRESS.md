@@ -9,7 +9,7 @@ Foundry + Solidity 0.8.26, `via_ir=true`, OZ v5.6.1, forge-std v1.16.1.
 - [x] **L2 — Leverage & Yield** ✅ build green, 28 tests pass (incl. invariants)
 - [x] **L3 — Structured Products** ✅ build green, 17 tests pass
 - [x] **L4 — Derivatives** ✅ build green, 18 tests pass
-- [ ] L5 — AI-Agent Vaults
+- [x] **L5 — AI-Agent Vaults** ✅ build green, 14 tests pass
 - [ ] ★ Token Flywheel
 - [ ] Deployment scripts + end-to-end test
 
@@ -157,3 +157,25 @@ LP share-value math.
 ### TODO(integration)
 - `OptionsVault` (cash-settled European options vs NAV at expiry).
 - Utilization-based dynamic funding curve refinement.
+
+---
+
+## L5 — AI-Agent Vaults ✅
+
+| Contract | Status | Notes |
+|---|---|---|
+| `agents/AgentPolicy` | ✅ | Hard guardrails: whitelist, max position, epoch turnover, drawdown kill, timelock |
+| `agents/AgentVault` | ✅ | VaultPortfolio whose manager is the agent; every trade gated by the policy |
+| `agents/AgentRegistry` | ✅ | Append-only, vault-only track-record accounting |
+
+**Tests (14):** agent trades within policy; **turnover/position/whitelist guardrails reject** out-of-bounds
+actions (+ fuzzed malicious agent stays bounded); **drawdown kill switch halts the vault**; timelocked
+param changes; registry **only-vault reporting + append-only** track record.
+
+### Design decisions
+- "**Agent proposes, policy disposes**": `AgentVault.executeTrade` checkpoints NAV (drawdown), runs the
+  swap, then calls `AgentPolicy.recordTrade`; any breach reverts the whole action atomically.
+- Policy params are **governance-owned and timelocked** — the agent can never widen its own limits.
+- **NAV now counts idle quote 1:1** (the USD numéraire) so an agent trading a component into the
+  stablecoin doesn't spuriously move NAV / trip the drawdown switch. (Also tightens L1 accounting.)
+- `AgentRegistry` is tamper-evident: only the bound vault reports, history is append-only.

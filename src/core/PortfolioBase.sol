@@ -132,11 +132,19 @@ abstract contract PortfolioBase is IPortfolio, Initializable, AccessControl, Ree
 
     /// @inheritdoc IPortfolio
     /// @dev SECURITY: reverts if any component price is stale/zero, so NAV is never computed on bad data.
+    ///      Idle quote held by the portfolio counts 1:1 as USD (the stable numéraire), so trading a
+    ///      component into quote does not spuriously change NAV.
     function totalNAV() public view returns (uint256 total) {
         uint256 len = _components.length;
         for (uint256 i; i < len; ++i) {
             address asset = _components[i].asset;
+            if (asset == address(quote)) continue; // counted once below
             total += _assetValue(asset);
+        }
+        uint256 quoteBal = quote.balanceOf(address(this));
+        if (quoteBal > 0) {
+            uint8 qdec = IERC20Metadata(address(quote)).decimals();
+            total += (quoteBal * 1e18) / (10 ** qdec);
         }
     }
 

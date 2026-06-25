@@ -55,6 +55,16 @@ contract VaultPortfolio is PortfolioBase {
         IFeeManager.FeeConfig calldata cfg,
         uint16 maxTradeBps_
     ) external initializer {
+        __VaultPortfolio_init(p, feeManager_, cfg, maxTradeBps_);
+    }
+
+    /// @dev Shared vault initializer; AgentVault calls this from its own initializer.
+    function __VaultPortfolio_init(
+        InitParams calldata p,
+        address feeManager_,
+        IFeeManager.FeeConfig calldata cfg,
+        uint16 maxTradeBps_
+    ) internal onlyInitializing {
         if (feeManager_ == address(0) || maxTradeBps_ == 0 || maxTradeBps_ > BPS || cfg.manager == address(0)) {
             revert InvalidParams();
         }
@@ -85,7 +95,8 @@ contract VaultPortfolio is PortfolioBase {
     ///      leverage). Trade value capped to maxTradeBps of NAV. Output asset gated on the depeg breaker.
     ///      Slippage + deadline enforced on the swap.
     function executeTrade(address tokenIn, address tokenOut, uint256 amountIn, uint256 minOut, uint256 deadline)
-        external
+        public
+        virtual
         nonReentrant
         onlyRole(MANAGER)
         returns (uint256 amountOut)
