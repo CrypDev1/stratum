@@ -10,7 +10,7 @@ Foundry + Solidity 0.8.26, `via_ir=true`, OZ v5.6.1, forge-std v1.16.1.
 - [x] **L3 — Structured Products** ✅ build green, 17 tests pass
 - [x] **L4 — Derivatives** ✅ build green, 18 tests pass
 - [x] **L5 — AI-Agent Vaults** ✅ build green, 14 tests pass
-- [ ] ★ Token Flywheel
+- [x] **★ Token Flywheel** ✅ build green, 26 tests pass
 - [ ] Deployment scripts + end-to-end test
 
 ---
@@ -179,3 +179,31 @@ param changes; registry **only-vault reporting + append-only** track record.
 - **NAV now counts idle quote 1:1** (the USD numéraire) so an agent trading a component into the
   stablecoin doesn't spuriously move NAV / trip the drawdown switch. (Also tightens L1 accounting.)
 - `AgentRegistry` is tamper-evident: only the bound vault reports, history is append-only.
+
+---
+
+## ★ Token Flywheel ✅
+
+| Contract | Status | Notes |
+|---|---|---|
+| `token/STRAT` | ✅ | Capped ERC20, MINTER-gated |
+| `token/EmissionsMinter` | ✅ | Linear emission, never exceeds schedule, decay via rate change |
+| `token/veSTRAT` | ✅ | Curve-style lock, decaying power, global point + slope changes |
+| `token/GaugeController` | ✅ | veSTRAT-weighted gauge votes, normalized relative weights |
+| `token/FeeDistributor` | ✅ | Per-epoch pro-rata fee distribution to lockers |
+| `BribeMarket` | ⏳ | Deferred (explicitly optional) |
+
+**Tests (26):** emissions linear + **never exceed schedule** (fuzz); ve **lock/decay math** (fuzz),
+increase amount/time, withdraw; gauge **weight normalization** (sums to 1e18), re-vote/over-allocation;
+fee distribution pro-rata, **no-double-claim**, **claims never exceed rewards** (fuzz).
+
+### Design decisions
+- `veSTRAT` uses the canonical Curve global point (`bias − slope·Δt`) with **scheduled slope changes** at
+  each lock's expiry, so `totalSupply()` decays correctly without iterating holders.
+- `GaugeController` records voting power at vote time (weekly cadence) and replaces a voter's prior
+  allocation on re-vote — no double counting; `relativeWeight` normalizes to 1e18.
+- `FeeDistributor` is **epoch-based**: lockers `checkpoint` their power into an epoch, rewards split
+  pro-rata, claims are one-shot per epoch → no double-claim, no over-distribution.
+
+### TODO(integration)
+- `BribeMarket` for vote incentives; wire each Index/Vault/Perp module to forward fees to FeeDistributor.
