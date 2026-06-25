@@ -5,7 +5,7 @@ Foundry + Solidity 0.8.26, `via_ir=true`, OZ v5.6.1, forge-std v1.16.1.
 ## Layer status
 
 - [x] **L0 — Oracle & Proof-of-Collateral** ✅ build green, 55 tests pass
-- [ ] L1 — Portfolios: Index + Vault
+- [x] **L1 — Portfolios: Index + Vault** ✅ build green, 49 tests pass (incl. invariants)
 - [ ] L2 — Leverage & Yield
 - [ ] L3 — Structured Products
 - [ ] L4 — Derivatives
@@ -42,3 +42,35 @@ DepegMonitor halt/stale/depeg-threshold.
 ### Open questions / TODO(integration)
 - Real Chainlink/Pyth feed addresses for bStocks on BNB Chain.
 - Real DEX TWAP adapter for `DepegMonitor` DEX source (currently MockOracleAdapter).
+
+---
+
+## L1 — Portfolios: Index + Vault ✅
+
+| Contract | Status | Notes |
+|---|---|---|
+| `core/PortfolioToken` | ✅ | ERC20 share, mint/burn restricted to manager |
+| `core/PortfolioBase` | ✅ | Cloneable NAV engine; NAV-fair mint, in-kind oracle-free redeem |
+| `core/IndexPortfolio` | ✅ | Strategy-driven rebalance, tolerance band + per-asset max-trade cap |
+| `core/VaultPortfolio` | ✅ | Manager executeTrade (whitelist + per-trade cap), streaming + HWM perf fees |
+| `core/FeeManager` | ✅ | Pure dilution fee math, capped, fuzzed |
+| `core/PortfolioFactory` | ✅ | Clone deploy, L0 health whitelist, forced protocol cut |
+| `core/strategies/FixedWeightStrategy`,`MarketCapWeightStrategy` | ✅ | Pluggable weights |
+| `mocks/MockSwapRouter` | ✅ | Parity DEX with settable slippage |
+
+**Tests (49):** mint/redeem NAV fairness (fuzz), **arbitrage peg invariant** + **fully-backed invariant**
+(128k calls, 0 reverts), rebalance toward target within caps, fee accrual + HWM correctness,
+executeTrade guardrails (whitelist/size), factory whitelist enforcement, pause leaves redeem open.
+
+### Design decisions
+- **Redeem is in-kind and oracle-independent** — works while paused or oracle stale, so users can always
+  exit. Mint requires fresh prices + `isTradingSafe` per component.
+- Fees are charged by **share dilution**; Vault accrues on the *pre-deposit* state so a new depositor
+  never pays a performance fee on their own capital.
+- The **quote stablecoin is not gated** on the depeg breaker (no equity feed); only equity components are.
+- NAV excludes transient idle quote; `navBefore` is snapshotted before pulling quote so
+  `added = navAfter - navBefore` equals the deposited value at swap parity → exact NAV-fair shares.
+- Each portfolio deploys its own `PortfolioToken` (not a clone) in `initialize` — clean manager binding.
+
+### TODO(integration)
+- PancakeSwap V2/V3 router adapter to replace `MockSwapRouter`.
