@@ -1,0 +1,9 @@
+out/
+cache/
+broadcast/
+.env
+.env.local
+docs/
+node_modules/
+lcov.info
+*.log
