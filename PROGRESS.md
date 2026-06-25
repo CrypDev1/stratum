@@ -8,7 +8,7 @@ Foundry + Solidity 0.8.26, `via_ir=true`, OZ v5.6.1, forge-std v1.16.1.
 - [x] **L1 — Portfolios: Index + Vault** ✅ build green, 49 tests pass (incl. invariants)
 - [x] **L2 — Leverage & Yield** ✅ build green, 28 tests pass (incl. invariants)
 - [x] **L3 — Structured Products** ✅ build green, 17 tests pass
-- [ ] L4 — Derivatives
+- [x] **L4 — Derivatives** ✅ build green, 18 tests pass
 - [ ] L5 — AI-Agent Vaults
 - [ ] ★ Token Flywheel
 - [ ] Deployment scripts + end-to-end test
@@ -130,3 +130,30 @@ gain/loss/severe-loss; **senior-priority-over-junior invariant** (fuzzed return)
 ### TODO(integration)
 - Origination fee wiring through `FeeManager` (currently structural; waterfall is the tested core).
 - Post-maturity YT yield freeze (currently yield can keep accruing after maturity).
+
+---
+
+## L4 — Derivatives ✅
+
+| Contract | Status | Notes |
+|---|---|---|
+| `derivatives/LiquidityPool` | ✅ | Vault-backed counterparty, LP shares, engine-only payouts |
+| `derivatives/PerpEngine` | ✅ | Isolated-margin perps, NAV-marked (after-hours aware), funding, liquidations, insurance fund |
+| `OptionsVault` | ⏳ | Deferred (explicitly optional in the spec) |
+
+**Tests (18):** open gated on fresh oracle + isTradingSafe; long/short PnL; loss-to-pool; funding accrual
+with skew; **leverage cap**; **liquidation when under maintenance**, **no liquidation when halted**;
+insurance-fund solvency; **PnL conservation invariant** (no stable created/destroyed, fuzzed price/side);
+LP share-value math.
+
+### Design decisions
+- The **LiquidityPool is the sole counterparty**: trader profit is paid by the pool, loss flows to the
+  pool, funding flows trader↔pool. This makes **PnL conservation** structural (all flows are transfers).
+- **Funding** is skew-proportional (`coef · (OI_long−OI_short)/OI`), accumulated in a signed index;
+  +ve index ⇒ longs pay. Symmetric so a balanced book nets ~zero through the pool.
+- Opens require fresh oracle AND `isTradingSafe`; **liquidations are blocked while halted** (same as L2).
+- **Bad debt** beyond a trader's margin draws on the **insurance fund**; open/liquidation fees feed it.
+
+### TODO(integration)
+- `OptionsVault` (cash-settled European options vs NAV at expiry).
+- Utilization-based dynamic funding curve refinement.
