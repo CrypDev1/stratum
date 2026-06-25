@@ -6,7 +6,7 @@ Foundry + Solidity 0.8.26, `via_ir=true`, OZ v5.6.1, forge-std v1.16.1.
 
 - [x] **L0 — Oracle & Proof-of-Collateral** ✅ build green, 55 tests pass
 - [x] **L1 — Portfolios: Index + Vault** ✅ build green, 49 tests pass (incl. invariants)
-- [ ] L2 — Leverage & Yield
+- [x] **L2 — Leverage & Yield** ✅ build green, 28 tests pass (incl. invariants)
 - [ ] L3 — Structured Products
 - [ ] L4 — Derivatives
 - [ ] L5 — AI-Agent Vaults
@@ -74,3 +74,32 @@ executeTrade guardrails (whitelist/size), factory whitelist enforcement, pause l
 
 ### TODO(integration)
 - PancakeSwap V2/V3 router adapter to replace `MockSwapRouter`.
+
+---
+
+## L2 — Leverage & Yield ✅
+
+| Contract | Status | Notes |
+|---|---|---|
+| `leverage/MoneyMarketYieldAdapter` (+ `VenusYieldAdapter`,`ListaYieldAdapter`) | ✅ | Wrap money market → IYieldAdapter |
+| `leverage/YieldRouter` | ✅ | Best-rate allocation, idle buffer for redemptions |
+| `leverage/LeverageModule` | ✅ | Isolated-margin looping leverage, HF checks, deleverage, liquidate |
+| `leverage/LeveragedIndex` | ✅ | Single-token target-leverage product, leverage rebalancing |
+| `mocks/MockMoneyMarket` | ✅ | Index-accruing lending mock |
+
+**Tests (28):** yield routing to best rate, idle-buffer maintenance, divest-on-withdraw, yield accrual;
+**no-value-lost** + accounting-identity invariants (128k calls); leverage open/HF/leverage caps;
+**liquidation only when HF<1 AND trading safe**, **no liquidation when circuit-breaker halted**;
+deleverage/repay/close; LeveragedIndex fair deposit/withdraw + closed-form leverage rebalance.
+
+### Design decisions
+- LeverageModule borrows from an internal **stable reserve** (LP-funded); the lent principal returns on
+  repay/close — no external lending integration needed for the core (TODO: real Venus/Lista borrow).
+- Liquidation requires **every component `isTradingSafe`** — a tripped breaker blocks liquidations so
+  positions aren't closed on bad/halted prices.
+- Debt is USD-pegged (stable = quote); a borrow-rate accrual models the **leverage spread** fee.
+- `LeveragedIndex` rebalance uses the closed form `delta = Lt·equity − collateral` so borrowing's own
+  collateral purchase is accounted for (hits target in one step).
+
+### TODO(integration)
+- Real Venus vToken / Lista market wiring; real DEX router for deleverage sells.

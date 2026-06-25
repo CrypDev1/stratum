@@ -10,6 +10,9 @@ interface IPortfolio {
         uint256 weightBps; // target weight; components sum to 10_000
     }
 
+    /// @notice The portfolio's component assets and target weights.
+    function components() external view returns (Component[] memory);
+
     /// @notice The ERC20 share token representing portfolio ownership.
     function shareToken() external view returns (address);
 
