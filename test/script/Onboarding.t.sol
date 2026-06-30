@@ -16,10 +16,13 @@ import { VaultPortfolio } from "../../src/core/VaultPortfolio.sol";
 import { PortfolioFactory } from "../../src/core/PortfolioFactory.sol";
 import { IPortfolio } from "../../src/interfaces/IPortfolio.sol";
 
+import { IAggregatorV3 } from "../../src/interfaces/IAggregatorV3.sol";
+import { ChainlinkAdapter } from "../../src/oracle/ChainlinkAdapter.sol";
 import { PancakeV3TwapAdapter } from "../../src/oracle/PancakeV3TwapAdapter.sol";
 import { PancakeV3SwapAdapter } from "../../src/periphery/PancakeV3SwapAdapter.sol";
 import { MockPancakeV3Pool } from "../../src/mocks/MockPancakeV3Pool.sol";
 import { MockPancakeV3Router } from "../../src/mocks/MockPancakeV3Router.sol";
+import { MockAggregatorV3 } from "../../src/mocks/MockAggregatorV3.sol";
 import { MockERC20 } from "../../src/mocks/MockERC20.sol";
 
 /// @notice End-to-end proof that the OnboardAssets flow makes a bStock usable: it passes the factory
@@ -38,7 +41,9 @@ contract OnboardingTest is Test {
     MockERC20 internal usdt; // quote / stable, 18 dec
     MockERC20 internal aapl; // onboarded bStock, 18 dec
 
-    PancakeV3TwapAdapter internal twap;
+    ChainlinkAdapter internal chainlink; // PRIMARY
+    MockAggregatorV3 internal feed;
+    PancakeV3TwapAdapter internal twap; // SECONDARY / DEX
     MockPancakeV3Pool internal pool;
 
     address internal admin = address(0xA11CE);
@@ -80,21 +85,24 @@ contract OnboardingTest is Test {
             })
         );
 
-        // ── TWAP source over the bStock/USDT V3 pool (tick 0 ⇒ $1 fair value) ──
+        // ── PRIMARY: Chainlink feed at $1 (8-dec answer) ──
+        feed = new MockAggregatorV3(8, 1e8);
+        chainlink = new ChainlinkAdapter(IAggregatorV3(address(feed)));
+        // ── SECONDARY / DEX: TWAP over the bStock/USDT V3 pool (tick 0 ⇒ $1) ──
         pool = new MockPancakeV3Pool(address(aapl), address(usdt), 0, 1e18);
         twap = new PancakeV3TwapAdapter(address(pool), address(aapl), WINDOW);
 
         _onboard();
     }
 
-    /// @dev The exact OnboardAssets steps, executed as admin.
+    /// @dev The exact OnboardAssets steps, executed as admin: Chainlink primary, TWAP secondary + DEX.
     function _onboard() internal {
         vm.startPrank(admin);
         oracle.configureAsset(
             address(aapl),
             NAVOracle.AssetConfig({
-                primary: IOracleAdapter(address(twap)),
-                secondary: IOracleAdapter(address(0)),
+                primary: IOracleAdapter(address(chainlink)),
+                secondary: IOracleAdapter(address(twap)),
                 maxStaleness: 86_400,
                 maxClosedStaleness: 604_800,
                 maxDeviationBps: 500,
@@ -122,6 +130,23 @@ contract OnboardingTest is Test {
         assertEq(price, 1e18, "TWAP fair value at tick 0");
         assertEq(updatedAt, block.timestamp, "fresh");
         assertFalse(isStale, "not stale");
+    }
+
+    function test_primaryPriceIsChainlinkNotTwap() public {
+        // Chainlink @ $1.03, TWAP @ $1.00 (tick 0): within the 5% deviation band, so price is fresh and
+        // reflects the Chainlink primary (1.03e18), not the TWAP.
+        feed.setAnswer(int256(103e6)); // 8-dec: $1.03
+        (uint256 price,, bool isStale) = oracle.getPrice(address(aapl));
+        assertFalse(isStale, "within deviation band");
+        assertEq(price, 1.03e18, "price comes from Chainlink primary");
+    }
+
+    function test_twapDeviationFlagsStaleAndUnsafe() public {
+        // Push the DEX TWAP > 5% away from the Chainlink fair value (tick 953 ≈ ±9%).
+        pool.setTick(953);
+        (, , bool isStale) = oracle.getPrice(address(aapl));
+        assertTrue(isStale, "primary/secondary deviation flags stale");
+        assertFalse(monitor.isTradingSafe(address(aapl)), "stale NAV => not trading safe");
     }
 
     /// @dev A single-asset FixedWeightStrategy targeting 100% bAAPL.

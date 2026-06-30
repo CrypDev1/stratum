@@ -20,6 +20,8 @@ import { IYieldAdapter } from "../src/interfaces/IYieldAdapter.sol";
 import { LiquidityPool } from "../src/derivatives/LiquidityPool.sol";
 import { PerpEngine } from "../src/derivatives/PerpEngine.sol";
 import { LeverageModule } from "../src/leverage/LeverageModule.sol";
+import { GaugeController } from "../src/token/GaugeController.sol";
+import { GaugeDistributor } from "../src/token/GaugeDistributor.sol";
 
 /// @title ConfigureProtocol
 /// @notice One-shot, idempotent deploy-and-wire of all the NEW additive pieces on top of the LIVE core.
@@ -45,6 +47,8 @@ contract ConfigureProtocol is Script {
     address internal constant NAV_ORACLE_DEFAULT = 0xbe263035a704E5039aCaB282AB011DF8175526e3;
     address internal constant DEPEG_DEFAULT = 0x7EB90C8F1E8E6bcC0C31A13D37271519dBB50D2a;
     address internal constant FACTORY_DEFAULT = 0x514ff906D211c86685db3DA68B8d18876A1665bd;
+    address internal constant STRAT_DEFAULT = 0xf0C2705Cb380c37FA92EEBD9301e13496D859906;
+    address internal constant GAUGE_CONTROLLER_DEFAULT = 0xacA48e04ce3b7AD51963fE822Cf04dFB362FA6CE;
 
     struct Ctx {
         address admin;
@@ -71,8 +75,25 @@ contract ConfigureProtocol is Script {
         _earn(c);
         _perp(c);
         _leverage(c, swapAdapter);
+        _gaugeDistributor();
 
         vm.stopBroadcast();
+    }
+
+    // ── Stage 5: gauge emissions distributor ─────────────────────────────────
+
+    function _gaugeDistributor() internal {
+        address existing = vm.envOr("GAUGE_DISTRIBUTOR", address(0));
+        if (existing != address(0)) {
+            console2.log("Reusing GAUGE_DISTRIBUTOR:", existing);
+            return;
+        }
+        address admin = vm.envOr("ADMIN", msg.sender);
+        IERC20 strat = IERC20(vm.envOr("STRAT", STRAT_DEFAULT));
+        GaugeController controller = GaugeController(vm.envOr("GAUGE_CONTROLLER", GAUGE_CONTROLLER_DEFAULT));
+        GaugeDistributor d = new GaugeDistributor(admin, strat, controller);
+        console2.log("Deployed GaugeDistributor:", address(d));
+        console2.log("  point the emissions keeper's EMISSIONS_RECIPIENT at this address");
     }
 
     // ── Stage 1: swap adapter + factory wiring ───────────────────────────────

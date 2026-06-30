@@ -7,17 +7,25 @@ import { NAVOracle } from "../src/oracle/NAVOracle.sol";
 import { ProofOfCollateral } from "../src/oracle/ProofOfCollateral.sol";
 import { DepegMonitor } from "../src/oracle/DepegMonitor.sol";
 import { IOracleAdapter } from "../src/interfaces/IOracleAdapter.sol";
+import { IAggregatorV3 } from "../src/interfaces/IAggregatorV3.sol";
+import { ChainlinkAdapter } from "../src/oracle/ChainlinkAdapter.sol";
 import { PancakeV3TwapAdapter } from "../src/oracle/PancakeV3TwapAdapter.sol";
 
 /// @title OnboardAssets
-/// @notice Onboards a list of (bStock, USDT pool) pairs into the LIVE L0 stack so the PortfolioFactory
-///         will accept them as components.
-/// @dev For each asset, as admin: (1) deploys a PancakeV3TwapAdapter over its bStock/USDT V3 pool, (2)
-///      wires it as the NAVOracle primary source, (3) wires the SAME adapter as the DepegMonitor DEX
-///      source — so market vs NAV depeg is ~0 and trading is safe — and (4) posts a manual 100%
-///      ProofOfCollateral attestation (TODO: replace with Binance's real PoC feed). The NAVOracle marks
-///      markets open on first configure, so afterwards `DepegMonitor.isTradingSafe` is true and the
-///      factory allow-list passes.
+/// @notice Onboards a list of (bStock, Chainlink feed, USDT pool) triples into the LIVE L0 stack so the
+///         PortfolioFactory will accept them as components.
+/// @dev For each asset, as admin: (1) deploys a ChainlinkAdapter over the asset's Chainlink feed and wires
+///      it as the NAVOracle **primary** (fair-value) source; (2) deploys a PancakeV3TwapAdapter over the
+///      bStock/USDT V3 pool and wires it as the NAVOracle **secondary** source — a deviation sanity-check:
+///      NAVOracle flags the price stale if primary vs secondary deviate beyond `MAX_DEVIATION_BPS`; (3)
+///      wires the SAME TWAP adapter as the DepegMonitor DEX source, so the breaker compares DEX market
+///      price (TWAP) against the Chainlink fair value; (4) posts a manual 100% ProofOfCollateral
+///      attestation (TODO: replace with Binance's real PoC feed). Markets default open on first configure,
+///      so afterwards `DepegMonitor.isTradingSafe` is true (within threshold) and the allow-list passes.
+///
+///      NOTE: the deployed NAVOracle uses `secondary` purely as a deviation cross-check, not an automatic
+///      failover — if Chainlink goes stale the price is flagged stale (consumers refuse it); it does not
+///      silently switch to the TWAP. That is the core's design and is not forked here.
 ///
 ///      Required env:
 ///        PRIVATE_KEY        deployer/admin EOA (must hold ORACLE_ADMIN / ATTESTOR / DEPEG_ADMIN)
@@ -25,7 +33,8 @@ import { PancakeV3TwapAdapter } from "../src/oracle/PancakeV3TwapAdapter.sol";
 ///        PROOF_OF_COLLATERAL live ProofOfCollateral  (default: mainnet)
 ///        DEPEG_MONITOR      live DepegMonitor        (default: mainnet)
 ///        BSTOCK_TOKENS      comma-separated bStock token addresses
-///        BSTOCK_POOLS       comma-separated bStock/USDT PancakeSwap V3 pool addresses (same order)
+///        CHAINLINK_FEEDS    comma-separated Chainlink aggregator addresses (same order) — PRIMARY source
+///        BSTOCK_POOLS       comma-separated bStock/USDT PancakeSwap V3 pool addresses (same order) — TWAP
 ///      Optional env (sane defaults):
 ///        TWAP_WINDOW=1800  MAX_STALENESS=86400  MAX_CLOSED_STALENESS=604800
 ///        MAX_DEVIATION_BPS=500  MAX_DRIFT_BPS=1000
@@ -45,7 +54,9 @@ contract OnboardAssets is Script {
         DepegMonitor depeg = DepegMonitor(vm.envOr("DEPEG_MONITOR", DEPEG_DEFAULT));
 
         address[] memory tokens = vm.envAddress("BSTOCK_TOKENS", ",");
+        address[] memory feeds = vm.envAddress("CHAINLINK_FEEDS", ",");
         address[] memory pools = vm.envAddress("BSTOCK_POOLS", ",");
+        require(tokens.length == feeds.length, "tokens/feeds length mismatch");
         require(tokens.length == pools.length, "tokens/pools length mismatch");
         require(tokens.length > 0, "no assets");
 
@@ -60,15 +71,17 @@ contract OnboardAssets is Script {
 
         for (uint256 i; i < tokens.length; ++i) {
             address token = tokens[i];
-            address pool = pools[i];
 
-            PancakeV3TwapAdapter adapter = new PancakeV3TwapAdapter(pool, token, window);
+            // PRIMARY: Chainlink fair value.
+            ChainlinkAdapter primary = new ChainlinkAdapter(IAggregatorV3(feeds[i]));
+            // SECONDARY / DEX: PancakeSwap V3 TWAP (deviation sanity-check + depeg DEX side).
+            PancakeV3TwapAdapter twap = new PancakeV3TwapAdapter(pools[i], token, window);
 
             oracle.configureAsset(
                 token,
                 NAVOracle.AssetConfig({
-                    primary: IOracleAdapter(address(adapter)),
-                    secondary: IOracleAdapter(address(0)),
+                    primary: IOracleAdapter(address(primary)),
+                    secondary: IOracleAdapter(address(twap)),
                     maxStaleness: maxStaleness,
                     maxClosedStaleness: maxClosedStaleness,
                     maxDeviationBps: maxDeviationBps,
@@ -77,15 +90,15 @@ contract OnboardAssets is Script {
                 })
             );
 
-            // Same TWAP feeds the depeg breaker's DEX side ⇒ market vs NAV depeg ~0 ⇒ trading safe.
-            depeg.setDexSource(token, IOracleAdapter(address(adapter)));
+            // The TWAP is the depeg breaker's DEX side: market (TWAP) vs fair value (Chainlink).
+            depeg.setDexSource(token, IOracleAdapter(address(twap)));
 
             // TODO(integration): replace with Binance's real proof-of-collateral feed.
             poc.attest(token, FULL_BACKING_BPS, keccak256(abi.encodePacked("manual-100pct", token)));
 
             console2.log("Onboarded", token);
-            console2.log("  pool   ", pool);
-            console2.log("  adapter", address(adapter));
+            console2.log("  chainlink (primary)", address(primary));
+            console2.log("  twap (secondary/dex)", address(twap));
         }
 
         vm.stopBroadcast();

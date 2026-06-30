@@ -29,10 +29,12 @@ node emissions-keeper.js
 
 Optional: `MIN_MINTABLE_WEI` (skip dust mints), `DRY_RUN=true`.
 
-> ⚠️ The deployed `GaugeController` only computes gauge **weights** — it has no on-chain
-> distributor that forwards STRAT to gauges by weight. This keeper pushes the schedule to one
-> `EMISSIONS_RECIPIENT`; splitting it per gauge needs a distributor contract or an off-chain
-> split. See the project's "WHAT I NEED FROM YOU" checklist.
+**Per-gauge distribution:** set `EMISSIONS_RECIPIENT` **and** `GAUGE_DISTRIBUTOR` to the additive
+`GaugeDistributor` address (deployed by `ConfigureProtocol.s.sol`). After minting, the keeper calls
+`GaugeDistributor.distribute()`, splitting the new STRAT across gauges by veSTRAT-voted relative
+weight. Each gauge's reward is then claimable via `GaugeDistributor.claim(gauge)` (permissionless;
+pays the gauge's admin-configured receiver, default the gauge address). If `GAUGE_DISTRIBUTOR` is
+unset, the keeper only mints to `EMISSIONS_RECIPIENT` with no on-chain split.
 
 **`cast` equivalent:**
 ```bash

@@ -12,10 +12,16 @@ the two keepers.
 | Item | Why | Notes |
 |---|---|---|
 | **bStock token address** | the asset to onboard | BEP-20, 18-dec assumed |
-| **bStock/USDT PancakeSwap V3 pool address** | TWAP price source | must be a **V3** pool (has `observe()`); confirm it has ≥ `TWAP_WINDOW` of observation history (grow `observationCardinalityNext` if needed) |
+| **Chainlink feed address** | **PRIMARY** fair-value source | the asset's Chainlink aggregator on BNB (USD). Wired via the existing `ChainlinkAdapter`, scaled to 18-dec |
+| **bStock/USDT PancakeSwap V3 pool address** | **SECONDARY** deviation check + depeg DEX side | must be a **V3** pool (has `observe()`); confirm ≥ `TWAP_WINDOW` of observation history (grow `observationCardinalityNext` if needed) |
 
-> The TWAP adapter prices the bStock in the pool's **other token** as $1. Use USDT (or USDC) pools.
+> Oracle wiring (per your instruction): **Chainlink is primary**; the PancakeSwap **TWAP is the secondary
+> deviation sanity-check** (NAVOracle flags the price stale if Chainlink vs TWAP deviate beyond
+> `MAX_DEVIATION_BPS`) and the DepegMonitor DEX source (market price vs Chainlink fair value).
+> Note: the deployed NAVOracle uses `secondary` only as a cross-check, **not** an automatic failover — if
+> Chainlink goes stale the price is flagged stale, it does not silently switch to the TWAP (core design).
 > If a bStock only has a **V2** pair (no `observe()`), tell me — that needs a different (stateful) TWAP keeper.
+> All three arrays (`BSTOCK_TOKENS` / `CHAINLINK_FEEDS` / `BSTOCK_POOLS`) must be equal length, same order.
 
 ### A2. PancakeSwap infra (REQUIRED, blocks swaps)
 | Env | What | Notes |
@@ -70,12 +76,12 @@ the two keepers.
 ## C. Env var names (exact) — see `.env.example` for the full annotated list
 `PRIVATE_KEY` `ADMIN` `NAV_ORACLE` `PROOF_OF_COLLATERAL` `DEPEG_MONITOR` `PORTFOLIO_FACTORY`
 `EMISSIONS_MINTER` `GAUGE_CONTROLLER` `STABLE_TOKEN` `PANCAKE_V3_ROUTER`
-`BSTOCK_TOKENS` `BSTOCK_POOLS` `TWAP_WINDOW` `MAX_STALENESS` `MAX_CLOSED_STALENESS`
+`BSTOCK_TOKENS` `CHAINLINK_FEEDS` `BSTOCK_POOLS` `TWAP_WINDOW` `MAX_STALENESS` `MAX_CLOSED_STALENESS`
 `MAX_DEVIATION_BPS` `MAX_DRIFT_BPS`
 `VENUS_VTOKEN` `BLOCKS_PER_YEAR` `LISTA_VAULT` `LISTA_APR_BPS` `EARN_IDLE_BUFFER_BPS`
 `PERP_MARKET` `POOL_SEED_AMOUNT` `INSURANCE_SEED_AMOUNT` `PERP_LIQUIDITY_POOL` `PERP_ENGINE`
 `LEVERAGE_PORTFOLIO` `LEVERAGE_MODULE` `GAUGE`
-`SWAP_ADAPTER` `EARN_YIELD_ROUTER`
+`STRAT` `GAUGE_DISTRIBUTOR` `SWAP_ADAPTER` `EARN_YIELD_ROUTER`
 Keepers: `RPC_URL` `EMISSIONS_RECIPIENT` `MIN_MINTABLE_WEI` `ASSETS` `MODE` `DRY_RUN`
 Fork test: `FORK_RPC` `VENUS_UNDERLYING_WHALE`
 
@@ -97,10 +103,12 @@ Neither keeper is required for basic reads/trading — they only maintain flags 
    `PortfolioBase` has no yield-router hook or admin setter. Earn ships as a **standalone** product
    (users deposit into the new `YieldRouter` directly). Auto-deploying portfolio idle cash would
    require a core change.
-2. **No on-chain per-gauge emissions distributor.** The deployed `GaugeController` only computes
-   gauge weights; it cannot receive STRAT and forward it to gauges by weight. The emissions keeper
-   pushes the schedule to one recipient; splitting per gauge needs a distributor contract (a new
-   additive contract) or an off-chain split. Want me to build a `GaugeDistributor`?
+2. ~~No on-chain per-gauge emissions distributor.~~ **RESOLVED — built `GaugeDistributor`** (additive,
+   `src/token/GaugeDistributor.sol`). Point `EmissionsMinter.emitTo` at it (`EMISSIONS_RECIPIENT`);
+   `distribute()` splits new STRAT across gauges by veSTRAT-voted weight; `claim(gauge)` pays the
+   gauge's admin-set receiver (default the gauge). Deployed by `ConfigureProtocol.s.sol` (stage 5) and
+   driven by the emissions keeper. You only need to: set `EMISSIONS_RECIPIENT`/`GAUGE_DISTRIBUTOR`, and
+   (optionally) configure a `rewardReceiver` per gauge via `setRewardReceiver`.
 3. **Proof-of-Collateral is a manual 100% attestation** (`OnboardAssets` posts `10000` bps, with a
    TODO). Wiring Binance's real PoC feed needs that feed's address/format from you.
 

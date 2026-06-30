@@ -20,10 +20,12 @@
  *   MIN_MINTABLE_WEI     skip the tx if mintable() is below this (default: 0 = always mint when >0)
  *   DRY_RUN              "true" to log only, send no tx
  *
- * NOTE: the deployed GaugeController only computes gauge weights; it has no on-chain
- * distributor that forwards STRAT to individual gauges by weight. This keeper pushes
- * the schedule to EMISSIONS_RECIPIENT; per-gauge distribution must be handled by an
- * additional distributor contract or off-chain (see WHAT I NEED FROM YOU checklist).
+ * Per-gauge distribution: point EMISSIONS_RECIPIENT at the additive GaugeDistributor
+ * (deployed by ConfigureProtocol.s.sol) and set GAUGE_DISTRIBUTOR to the same address.
+ * After minting, this keeper calls GaugeDistributor.distribute() to split the new STRAT
+ * across gauges by veSTRAT-voted relative weight. Gauges' rewards are then claimable via
+ * GaugeDistributor.claim(gauge). If GAUGE_DISTRIBUTOR is unset, the keeper only mints to
+ * EMISSIONS_RECIPIENT (no on-chain split).
  */
 const { ethers } = require("ethers");
 
@@ -33,6 +35,11 @@ const MINTER_ABI = [
   "function maxEmissions() view returns (uint256)",
   "function ratePerSecond() view returns (uint256)",
   "function emitTo(address to) returns (uint256)",
+];
+
+const DISTRIBUTOR_ABI = [
+  "function distribute() returns (uint256)",
+  "function undistributed() view returns (uint256)",
 ];
 
 const GAUGE_CONTROLLER_DEFAULT = "0xacA48e04ce3b7AD51963fE822Cf04dFB362FA6CE";
@@ -80,6 +87,21 @@ async function main() {
   console.log(`[emissions] sent ${tx.hash}; waiting...`);
   const rcpt = await tx.wait();
   console.log(`[emissions] confirmed in block ${rcpt.blockNumber}`);
+
+  // Optionally split the freshly-minted STRAT across gauges by weight.
+  const distributorAddr = process.env.GAUGE_DISTRIBUTOR;
+  if (distributorAddr) {
+    const distributor = new ethers.Contract(distributorAddr, DISTRIBUTOR_ABI, wallet);
+    const pending = await distributor.undistributed();
+    if (pending === 0n) {
+      console.log("[emissions] distributor has nothing to split; skipping distribute().");
+      return;
+    }
+    console.log(`[emissions] distribute() splitting ${ethers.formatEther(pending)} STRAT across gauges...`);
+    const dtx = await distributor.distribute();
+    await dtx.wait();
+    console.log(`[emissions] distribute() confirmed ${dtx.hash}`);
+  }
 }
 
 main().catch((e) => {
