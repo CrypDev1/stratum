@@ -1,0 +1,14 @@
+{
+  "name": "stratum-keepers",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Off-chain keeper jobs for Stratum: emissions push + oracle market-status/depeg maintenance.",
+  "scripts": {
+    "emissions": "node emissions-keeper.js",
+    "market-status": "node market-status-keeper.js"
+  },
+  "dependencies": {
+    "ethers": "^6.13.0"
+  }
+}

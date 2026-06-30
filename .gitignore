@@ -7,3 +7,6 @@ docs/
 node_modules/
 lcov.info
 *.log
+
+# keeper deps
+keepers/node_modules/
