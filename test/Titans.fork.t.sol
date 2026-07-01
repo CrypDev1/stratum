@@ -10,6 +10,7 @@ import { IVenusOracle } from "../src/interfaces/external/IVenusOracle.sol";
 import { ChainlinkOnlyDepegMonitor } from "../src/oracle/ChainlinkOnlyDepegMonitor.sol";
 import { PancakeV3SwapAdapter } from "../src/periphery/PancakeV3SwapAdapter.sol";
 import { PortfolioFactory } from "../src/core/PortfolioFactory.sol";
+import { FixedWeightStrategy } from "../src/core/strategies/FixedWeightStrategy.sol";
 import { INAVOracle } from "../src/interfaces/INAVOracle.sol";
 import { IOracleAdapter } from "../src/interfaces/IOracleAdapter.sol";
 import { IDepegMonitor } from "../src/interfaces/IDepegMonitor.sol";
@@ -19,7 +20,7 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @notice Forked-mainnet end-to-end simulation of the Titans (TTAN) launch against the LIVE core.
 ///         Reproduces the full broadcast sequence — onboard (Chainlink-only) -> wire Chainlink-only depeg
-///         monitor + swap adapter into the factory -> create TTAN vault -> mint — using the real live
+///         monitor + swap adapter into the factory -> create TTAN Index -> mint — using the real live
 ///         NAVOracle/PoC/Factory, real bStock tokens + Chainlink feeds, and real PancakeSwap V3 pools.
 ///
 ///         SKIPPED unless FORK_RPC is set, so CI stays hermetic. Run:
@@ -88,12 +89,21 @@ contract TitansForkTest is Test {
         assertTrue(monitor.isTradingSafe(NVDAB), "NVDAB safe");
         assertTrue(monitor.isTradingSafe(SPCXB), "SPCXB safe");
 
-        // ── Step 3: create the Titans (TTAN) vault, 55/45, 0.45% management fee ──
+        // ── Step 3: create the Titans (TTAN) zero-fee auto-rebalancing Index, 40/60 (deep-liquidity tilt) ──
+        address[] memory tokens = new address[](2);
+        tokens[0] = NVDAB;
+        tokens[1] = SPCXB;
+        uint256[] memory weights = new uint256[](2);
+        weights[0] = 4000; // NVDAB 40%
+        weights[1] = 6000; // SPCXB 60%
         IPortfolio.Component[] memory comps = new IPortfolio.Component[](2);
-        comps[0] = IPortfolio.Component({ asset: NVDAB, weightBps: 5500 });
-        comps[1] = IPortfolio.Component({ asset: SPCXB, weightBps: 4500 });
-        address ttan = FACTORY.createVault(
-            "Titans", "TTAN", USDT, comps, /*maxSlippageBps*/ 1000, ADMIN, ADMIN, /*mgmt*/ 45, /*perf*/ 0, /*maxTrade*/ 5000
+        comps[0] = IPortfolio.Component({ asset: NVDAB, weightBps: 4000 });
+        comps[1] = IPortfolio.Component({ asset: SPCXB, weightBps: 6000 });
+
+        FixedWeightStrategy strategy = new FixedWeightStrategy(ADMIN);
+        strategy.setWeights(tokens, weights);
+        address ttan = FACTORY.createIndex(
+            "Titans", "TTAN", USDT, comps, /*maxSlippageBps*/ 1000, ADMIN, address(strategy), /*tolerance*/ 100, /*maxTrade*/ 5000
         );
         vm.stopPrank();
         assertTrue(ttan != address(0), "TTAN deployed");

@@ -5,32 +5,31 @@ import { Script, console2 } from "forge-std/Script.sol";
 
 import { PortfolioFactory } from "../src/core/PortfolioFactory.sol";
 import { IPortfolio } from "../src/interfaces/IPortfolio.sol";
+import { FixedWeightStrategy } from "../src/core/strategies/FixedWeightStrategy.sol";
 
 /// @title CreateTitans
 /// @notice Deploys the launch index "Titans" (TTAN) via the LIVE PortfolioFactory.
-/// @dev TTAN holds a fixed NVIDIA + SpaceX basket (NVDAB 55% / SPCXB 45%) quoted in USDT.
+/// @dev TTAN is a **zero-fee, rules-based auto-rebalancing Index** (`createIndex`) holding a fixed
+///      NVIDIA + SpaceX basket quoted in USDT. Target weights are enforced by a `FixedWeightStrategy`; the
+///      portfolio's rebalancer trades back toward them within the no-trade tolerance band. Index portfolios
+///      charge no management fee (fees are a Vault-only feature here) — hence no fee params.
 ///
-///      PRODUCT-TYPE NOTE: TTAN is created as a **Vault**, not a rules-based Index. In this codebase a
-///      management fee is a FeeManager feature that only Vault portfolios carry (`createVault` takes
-///      `managementFeeBps`); rules-based `createIndex` portfolios charge no fee. Since the launch spec
-///      requires a 0.45% management fee, TTAN is a Vault holding the fixed basket with a passive manager
-///      (the admin). `mint` still allocates by the component weights and shares track NAV, so it behaves
-///      like a fee-bearing index fund. To instead ship a zero-fee auto-rebalancing Index, use
-///      `createIndex` + a FixedWeightStrategy (no management fee possible there).
+///      Default weights **NVDAB 40% / SPCXB 60%** lean into SPCXB's deep USDT pool so mints don't choke on
+///      NVDAB's thin pool.
 ///
 ///      Every component must already pass the factory allow-list (PoC healthy + isTradingSafe) — i.e. it
 ///      must have been onboarded (`OnboardAssets`) and the Chainlink-only depeg monitor wired
 ///      (`ConfigureProtocol` with DEPLOY_CHAINLINK_ONLY_DEPEG=true) BEFORE this runs.
 ///
 ///      Required env:
-///        PRIVATE_KEY        admin EOA
+///        PRIVATE_KEY        admin EOA (becomes the strategy owner + portfolio admin/rebalancer)
 ///        STABLE_TOKEN       quote asset (USDT on BNB)
-///        INDEX_COMPONENTS   comma-separated component token addresses (default: NVDAB,SPCXB)
-///        INDEX_WEIGHTS      comma-separated weights in bps, same order, sum 10000 (default: 5500,4500)
 ///      Optional env:
+///        INDEX_COMPONENTS   comma-separated token addresses (default: NVDAB,SPCXB)
+///        INDEX_WEIGHTS      comma-separated bps, same order, sum 10000 (default: 4000,6000)
 ///        PORTFOLIO_FACTORY (default mainnet)  ADMIN (default: sender)
 ///        INDEX_NAME=Titans  INDEX_SYMBOL=TTAN
-///        MGMT_FEE_BPS=45  PERF_FEE_BPS=0  MAX_SLIPPAGE_BPS=500  MAX_TRADE_BPS=5000
+///        MAX_SLIPPAGE_BPS=500  REBALANCE_TOLERANCE_BPS=100  MAX_TRADE_BPS=5000
 ///
 ///      Run: `forge script script/CreateTitans.s.sol:CreateTitans --rpc-url bsc --broadcast`
 contract CreateTitans is Script {
@@ -58,20 +57,24 @@ contract CreateTitans is Script {
 
         string memory name = vm.envOr("INDEX_NAME", string("Titans"));
         string memory symbol = vm.envOr("INDEX_SYMBOL", string("TTAN"));
-        uint16 mgmtFeeBps = uint16(vm.envOr("MGMT_FEE_BPS", uint256(45))); // 0.45%
-        uint16 perfFeeBps = uint16(vm.envOr("PERF_FEE_BPS", uint256(0)));
         uint16 maxSlippageBps = uint16(vm.envOr("MAX_SLIPPAGE_BPS", uint256(500)));
+        uint16 toleranceBps = uint16(vm.envOr("REBALANCE_TOLERANCE_BPS", uint256(100)));
         uint16 maxTradeBps = uint16(vm.envOr("MAX_TRADE_BPS", uint256(5000)));
 
         vm.startBroadcast(vm.envUint("PRIVATE_KEY"));
-        portfolio = factory.createVault(
-            name, symbol, stable, comps, maxSlippageBps, admin, admin, mgmtFeeBps, perfFeeBps, maxTradeBps
+
+        // Rules-based target weights (owner = admin, who is also the broadcaster here).
+        FixedWeightStrategy strategy = new FixedWeightStrategy(admin);
+        strategy.setWeights(tokens, weights);
+
+        portfolio = factory.createIndex(
+            name, symbol, stable, comps, maxSlippageBps, admin, address(strategy), toleranceBps, maxTradeBps
         );
         vm.stopBroadcast();
 
-        console2.log("Titans (TTAN) deployed:", portfolio);
+        console2.log("Titans (TTAN) Index deployed:", portfolio);
+        console2.log("  strategy (FixedWeight):", address(strategy));
         console2.log("  quote (USDT):", stable);
-        console2.log("  management fee (bps):", mgmtFeeBps);
         for (uint256 i; i < comps.length; ++i) {
             console2.log("  component", comps[i].asset, comps[i].weightBps);
         }
@@ -85,7 +88,7 @@ contract CreateTitans is Script {
 
     function _defaultWeights() internal pure returns (uint256[] memory w) {
         w = new uint256[](2);
-        w[0] = 5500; // NVDAB 55%
-        w[1] = 4500; // SPCXB 45%
+        w[0] = 4000; // NVDAB 40%
+        w[1] = 6000; // SPCXB 60%
     }
 }

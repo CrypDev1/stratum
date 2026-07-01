@@ -4,7 +4,8 @@ All data read live via `cast`/forge fork against BNB mainnet. No websites scrape
 broadcast (waiting on your "GO" — Gate 2).
 
 ## Final launch decision
-- **Titans (TTAN)** = **NVDAB 55% / SPCXB 45%**, quoted in USDT, **0.45% management fee**.
+- **Titans (TTAN)** = **NVDAB 40% / SPCXB 60%**, quoted in USDT, **zero-fee auto-rebalancing Index**
+  (`createIndex` + FixedWeightStrategy). SPCXB-heavy tilt routes mints through its deep pool.
 - **TSLAB dropped** — hard technical reason (not just pricing): its only V3 pool (TSLAB/USDC) has **zero
   in-range liquidity**, so mint's `USDT->TSLAB` swap would revert. It is un-buyable on-chain today. This
   holds even under the Chainlink-only pricing path (liquidity is irrelevant to the *safety* check but still
@@ -43,15 +44,16 @@ contract modified or redeployed. **Gate 1 (would a redeploy be needed?) — NO; 
 ## Fork simulation result (live core, real pools) — PASSED
 Ran the whole broadcast sequence against a BNB-mainnet fork (`test/Titans.fork.t.sol`):
 onboard (Venus-oracle, Chainlink-only) → deploy+wire `ChainlinkOnlyDepegMonitor` + `PancakeV3SwapAdapter`
-into the live factory → `createVault` TTAN (55/45, 45 bps) → user mints 100 USDT.
+into the live factory → `createIndex` TTAN (40/60, zero-fee, FixedWeightStrategy) → user mints 100 USDT.
 
 - allow-list passed for both components; prices sane off Chainlink (NVDAB $194.98, SPCXB $161.95).
-- mint of **100 USDT → 95.59 TTAN shares**; vault acquired **0.2582 NVDAB (~$50.3)** + **0.2794 SPCXB
-  (~$45.2)**; navPerShare ≈ 1.0.
-- Cost ~4.4%, almost entirely the **NVDAB thin-pool** leg (~8.6% slippage on a $55 buy); SPCXB's deep pool
-  was ~0. **Operational note:** for production either size NVDAB mints small, raise per-tx slippage, or have
-  an LP deepen the NVDAB/USDT (fee-500) pool. (Sim used 10% slippage to complete; `CreateTitans` defaults to
-  5% — large NVDAB legs may revert until the pool deepens.)
+- mint of **100 USDT → 97.62 TTAN shares**; index acquired **0.1922 NVDAB (~$37.5)** + **0.3735 SPCXB
+  (~$60.5)**; navPerShare ≈ 1.0.
+- Cost **~2.4%** (down from ~4.4% at 55/45) — the 40/60 SPCXB tilt shifts volume to its deep pool.
+- **Residual NVDAB-pool caveat:** the NVDAB leg (~$40) still slips ~6% because its fee-500 pool is thin, so
+  a 100-USDT mint needs a per-tx slippage bound above ~6% (or smaller mints, or a deeper NVDAB/USDT LP).
+  `CreateTitans` defaults `MAX_SLIPPAGE_BPS=500`; the sim used 1000 to complete a full 100-USDT mint. The
+  clean fix is deeper NVDAB liquidity; until then, keep first mints modest or raise the bound.
 
 ## Ready-to-paste env (already in `.env.example`)
 ```dotenv
@@ -63,14 +65,12 @@ DEPLOY_CHAINLINK_ONLY_DEPEG=true
 SWAP_POOL_FEE_TOKENS=0x02Fca66C1D1aFB4E2A7884261eB00F63598a7436,0xbe9D156892E55e7154BcD3cB0FEA677F9D3103E1
 SWAP_POOL_FEE_TIERS=500,2500
 INDEX_COMPONENTS=0x02Fca66C1D1aFB4E2A7884261eB00F63598a7436,0xbe9D156892E55e7154BcD3cB0FEA677F9D3103E1
-INDEX_WEIGHTS=5500,4500
+INDEX_WEIGHTS=4000,6000
 INDEX_NAME=Titans
 INDEX_SYMBOL=TTAN
-MGMT_FEE_BPS=45
 ```
 
-## Product-type note (TTAN = Vault)
-In this codebase a management fee is a FeeManager feature that only **Vault** portfolios carry;
-rules-based `createIndex` charges no fee. To honor the 0.45% fee, TTAN is created as a Vault holding the
-fixed 55/45 basket with a passive manager (admin) — behaves like a fee-bearing index fund. Say the word to
-switch to a zero-fee auto-rebalancing Index instead.
+## Product-type note (TTAN = zero-fee Index)
+TTAN is a rules-based **Index** (`createIndex` + FixedWeightStrategy): no management fee, and the admin
+rebalancer trades back toward the 40/60 target within the tolerance band. (A management fee would require a
+Vault; not used here per your instruction.)
