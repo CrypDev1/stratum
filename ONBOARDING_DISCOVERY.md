@@ -12,6 +12,7 @@ Executed as admin `0x2e7FaF4a5c5705d87e7AB58c4a879D7F8aDb933C`. All three steps 
    - ChainlinkOnlyDepegMonitor `0x07Cb968907D81d6B2F3A192738BF58dF50fe3C39`
    - GaugeDistributor `0xE5B30CFf0108224aac528aaC5Bc2E9C515B8AFc8` (stage-5 bonus)
    - EmissionsAutomation `0xEa73cE160aB8d5382dE802Ea113d2FD04e8e2787` (Chainlink upkeep target; holds EMISSIONS_ADMIN)
+4. **create-gauge** — TTAN registered as a GaugeController gauge (the gauge address IS the portfolio, `0x5479Bd2871c644622882B8f7f933D8084c274733`); `gaugeCount=1`. relativeWeight is 0 until veSTRAT holders vote for it (`voteForGauge`), at which point GaugeDistributor.distribute() routes its share of emissions here.
 3. **create-titans** — **Titans (TTAN) Index `0x5479Bd2871c644622882B8f7f933D8084c274733`**
    (share token `0x9377916612421DF7F6aA6d90A00156f3A2e8dE3e`), FixedWeightStrategy
    `0xe597A6C22A385A19C80B1515C5ED68532BB49E99`, NVDAB 40% / SPCXB 60%, quote USDT.
