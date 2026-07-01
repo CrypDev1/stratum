@@ -1,5 +1,6 @@
 .PHONY: build test fmt snapshot coverage deploy-testnet clean \
-	onboard-assets configure-protocol seed-perp create-gauge
+	onboard-assets configure-protocol seed-perp create-gauge create-titans \
+	onboard-assets-dry configure-protocol-dry create-titans-dry titans-sim
 
 build:
 	forge build
@@ -34,3 +35,20 @@ seed-perp:
 
 create-gauge:
 	forge script script/CreateGauge.s.sol:CreateGauge --rpc-url bsc --broadcast -vvvv
+
+create-titans:
+	forge script script/CreateTitans.s.sol:CreateTitans --rpc-url bsc --broadcast -vvvv
+
+# ── Dry-run (SIMULATE ONLY, no --broadcast): forge forks mainnet and simulates the tx sequence ──
+onboard-assets-dry:
+	forge script script/OnboardAssets.s.sol:OnboardAssets --rpc-url bsc -vvvv
+
+configure-protocol-dry:
+	forge script script/ConfigureProtocol.s.sol:ConfigureProtocol --rpc-url bsc -vvvv
+
+create-titans-dry:
+	forge script script/CreateTitans.s.sol:CreateTitans --rpc-url bsc -vvvv
+
+# ── Full end-to-end fork simulation incl. a real mint (onboard -> wire -> create TTAN -> mint) ──
+titans-sim:
+	FORK_RPC=$${FORK_RPC:-https://bsc-dataseed.bnbchain.org} forge test --match-path test/Titans.fork.t.sol -vv

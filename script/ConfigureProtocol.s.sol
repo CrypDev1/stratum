@@ -22,6 +22,7 @@ import { PerpEngine } from "../src/derivatives/PerpEngine.sol";
 import { LeverageModule } from "../src/leverage/LeverageModule.sol";
 import { GaugeController } from "../src/token/GaugeController.sol";
 import { GaugeDistributor } from "../src/token/GaugeDistributor.sol";
+import { ChainlinkOnlyDepegMonitor } from "../src/oracle/ChainlinkOnlyDepegMonitor.sol";
 
 /// @title ConfigureProtocol
 /// @notice One-shot, idempotent deploy-and-wire of all the NEW additive pieces on top of the LIVE core.
@@ -72,12 +73,57 @@ contract ConfigureProtocol is Script {
         vm.startBroadcast(vm.envUint("PRIVATE_KEY"));
 
         address swapAdapter = _swapAdapter(c);
+        address depegMonitor = _chainlinkOnlyDepeg(c); // address(0) => keep the factory's current monitor
+        _rewireFactory(c, swapAdapter, depegMonitor);
         _earn(c);
         _perp(c);
         _leverage(c, swapAdapter);
         _gaugeDistributor();
 
         vm.stopBroadcast();
+    }
+
+    // ── Chainlink-only depeg breaker (additive) ──────────────────────────────
+    // Deploy the ChainlinkOnlyDepegMonitor when DEPLOY_CHAINLINK_ONLY_DEPEG=true (or reuse via env). It is
+    // wired into the factory below; assets onboarded Chainlink-only (no DEX pool) then gate purely on
+    // Chainlink freshness. Returns address(0) to leave the factory's current depegMonitor untouched.
+    function _chainlinkOnlyDepeg(Ctx memory c) internal returns (address monitor) {
+        monitor = vm.envOr("CHAINLINK_ONLY_DEPEG_MONITOR", address(0));
+        if (monitor != address(0)) {
+            console2.log("Reusing CHAINLINK_ONLY_DEPEG_MONITOR:", monitor);
+            return monitor;
+        }
+        if (!vm.envOr("DEPLOY_CHAINLINK_ONLY_DEPEG", false)) {
+            console2.log("Chainlink-only depeg: skipped (set DEPLOY_CHAINLINK_ONLY_DEPEG=true to enable)");
+            return address(0);
+        }
+        monitor = address(new ChainlinkOnlyDepegMonitor(c.admin, INAVOracle(c.navOracle)));
+        console2.log("Deployed ChainlinkOnlyDepegMonitor:", monitor);
+    }
+
+    // ── Single factory re-wire: swapRouter (+ optional depegMonitor) ─────────
+    function _rewireFactory(Ctx memory c, address swapAdapter, address depegMonitor) internal {
+        PortfolioFactory f = PortfolioFactory(c.factory);
+        address newDepeg = depegMonitor == address(0) ? f.depegMonitor() : depegMonitor;
+        if (f.swapRouter() == swapAdapter && f.depegMonitor() == newDepeg) {
+            console2.log("Factory wiring already current; no change");
+            return;
+        }
+        f.setWiring(
+            PortfolioFactory.Wiring({
+                navOracle: f.navOracle(),
+                proofOfCollateral: f.proofOfCollateral(),
+                depegMonitor: newDepeg,
+                swapRouter: swapAdapter,
+                feeManager: f.feeManager(),
+                indexImplementation: f.indexImplementation(),
+                vaultImplementation: f.vaultImplementation(),
+                protocolTreasury: f.protocolTreasury(),
+                protocolCutBps: f.protocolCutBps()
+            })
+        );
+        console2.log("Factory re-wired. swapRouter ->", swapAdapter);
+        console2.log("             depegMonitor ->", newDepeg);
     }
 
     // ── Stage 5: gauge emissions distributor ─────────────────────────────────
@@ -107,24 +153,15 @@ contract ConfigureProtocol is Script {
             console2.log("Reusing SWAP_ADAPTER:", swapAdapter);
         }
 
-        PortfolioFactory f = PortfolioFactory(c.factory);
-        if (f.swapRouter() != swapAdapter) {
-            f.setWiring(
-                PortfolioFactory.Wiring({
-                    navOracle: f.navOracle(),
-                    proofOfCollateral: f.proofOfCollateral(),
-                    depegMonitor: f.depegMonitor(),
-                    swapRouter: swapAdapter,
-                    feeManager: f.feeManager(),
-                    indexImplementation: f.indexImplementation(),
-                    vaultImplementation: f.vaultImplementation(),
-                    protocolTreasury: f.protocolTreasury(),
-                    protocolCutBps: f.protocolCutBps()
-                })
-            );
-            console2.log("Factory swapRouter wired ->", swapAdapter);
-        } else {
-            console2.log("Factory swapRouter already set; no change");
+        // Per-pair V3 fee tiers: SWAP_POOL_FEE_TOKENS[i] paired with STABLE at tier SWAP_POOL_FEE_TIERS[i].
+        // Needed when a bStock's live pool is not the adapter's defaultFee tier (e.g. NVDAB/USDT = 500).
+        address[] memory feeTokens = vm.envOr("SWAP_POOL_FEE_TOKENS", ",", new address[](0));
+        uint256[] memory feeTiers = vm.envOr("SWAP_POOL_FEE_TIERS", ",", new uint256[](0));
+        require(feeTokens.length == feeTiers.length, "fee tokens/tiers length mismatch");
+        PancakeV3SwapAdapter adapter = PancakeV3SwapAdapter(swapAdapter);
+        for (uint256 i; i < feeTokens.length; ++i) {
+            adapter.setPoolFee(c.stable, feeTokens[i], uint24(feeTiers[i]));
+            console2.log("  pool fee set:", feeTokens[i], feeTiers[i]);
         }
     }
 

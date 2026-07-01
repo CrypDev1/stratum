@@ -10,32 +10,49 @@ import { IOracleAdapter } from "../src/interfaces/IOracleAdapter.sol";
 import { IAggregatorV3 } from "../src/interfaces/IAggregatorV3.sol";
 import { ChainlinkAdapter } from "../src/oracle/ChainlinkAdapter.sol";
 import { PancakeV3TwapAdapter } from "../src/oracle/PancakeV3TwapAdapter.sol";
+import { VenusOracleAdapter } from "../src/oracle/VenusOracleAdapter.sol";
+import { IVenusOracle } from "../src/interfaces/external/IVenusOracle.sol";
 
 /// @title OnboardAssets
-/// @notice Onboards a list of (bStock, Chainlink feed, USDT pool) triples into the LIVE L0 stack so the
-///         PortfolioFactory will accept them as components.
-/// @dev For each asset, as admin: (1) deploys a ChainlinkAdapter over the asset's Chainlink feed and wires
-///      it as the NAVOracle **primary** (fair-value) source; (2) deploys a PancakeV3TwapAdapter over the
-///      bStock/USDT V3 pool and wires it as the NAVOracle **secondary** source — a deviation sanity-check:
-///      NAVOracle flags the price stale if primary vs secondary deviate beyond `MAX_DEVIATION_BPS`; (3)
-///      wires the SAME TWAP adapter as the DepegMonitor DEX source, so the breaker compares DEX market
-///      price (TWAP) against the Chainlink fair value; (4) posts a manual 100% ProofOfCollateral
-///      attestation (TODO: replace with Binance's real PoC feed). Markets default open on first configure,
-///      so afterwards `DepegMonitor.isTradingSafe` is true (within threshold) and the allow-list passes.
+/// @notice Onboards a list of bStocks into the LIVE L0 stack so the PortfolioFactory will accept them as
+///         components. Chainlink is the PRIMARY (fair-value) source for every asset.
+/// @dev Two modes, chosen per-asset by whether a DEX pool is supplied in `BSTOCK_POOLS`:
 ///
-///      NOTE: the deployed NAVOracle uses `secondary` purely as a deviation cross-check, not an automatic
-///      failover — if Chainlink goes stale the price is flagged stale (consumers refuse it); it does not
-///      silently switch to the TWAP. That is the core's design and is not forked here.
+///      A) CHAINLINK-ONLY (pool == address(0), or `BSTOCK_POOLS` omitted): wires ONLY the ChainlinkAdapter
+///         as the NAVOracle primary with `secondary = address(0)` (no DEX cross-check) and posts the PoC
+///         attestation. Safety for these assets is enforced by the additive `ChainlinkOnlyDepegMonitor`
+///         (wired into the factory by `ConfigureProtocol`), which gates trading purely on Chainlink
+///         freshness — a stale feed pauses the asset. Use this for RWA/bStocks whose on-chain pools are
+///         empty or observation-cardinality-1 (a TWAP would return 0 and brick the asset). NO DEX source is
+///         set on the legacy DepegMonitor in this mode.
+///
+///      B) TWAP-CROSS-CHECK (pool != address(0)): additionally deploys a PancakeV3TwapAdapter over the
+///         bStock/USDT V3 pool and wires it as the NAVOracle `secondary` (deviation sanity-check) AND as the
+///         legacy DepegMonitor DEX source. Requires the pool to have `observationCardinality` grown and
+///         >= TWAP_WINDOW of history, else the TWAP reads 0 and the asset flags stale. Kept for assets that
+///         have a real, deep, TWAP-capable pool.
+///
+///      Nothing here modifies or redeploys a core contract — it only calls existing admin setters
+///      (ORACLE_ADMIN / ATTESTOR / DEPEG_ADMIN) on the live L0.
+///
+///      PRIMARY source: for bStocks, the raw Chainlink "SingleFeed" aggregators are access-controlled and
+///      revert (`OnlyAuthorizedCallerAllowed`) for any contract caller other than an authorized consumer.
+///      So set `VENUS_RESILIENT_ORACLE` to price each bStock through Venus's ResilientOracle (the authorized
+///      reader whose main source IS that Chainlink feed) via a `VenusOracleAdapter`. `CHAINLINK_FEEDS` is
+///      then unused. Omit `VENUS_RESILIENT_ORACLE` only for standard aggregators that permit contract reads.
 ///
 ///      Required env:
-///        PRIVATE_KEY        deployer/admin EOA (must hold ORACLE_ADMIN / ATTESTOR / DEPEG_ADMIN)
-///        NAV_ORACLE         live NAVOracle           (default: mainnet)
-///        PROOF_OF_COLLATERAL live ProofOfCollateral  (default: mainnet)
-///        DEPEG_MONITOR      live DepegMonitor        (default: mainnet)
+///        PRIVATE_KEY        deployer/admin EOA (holds ORACLE_ADMIN / ATTESTOR / DEPEG_ADMIN)
+///        NAV_ORACLE         live NAVOracle            (default: mainnet)
+///        PROOF_OF_COLLATERAL live ProofOfCollateral   (default: mainnet)
+///        DEPEG_MONITOR      live DepegMonitor         (default: mainnet; only used in TWAP mode)
 ///        BSTOCK_TOKENS      comma-separated bStock token addresses
-///        CHAINLINK_FEEDS    comma-separated Chainlink aggregator addresses (same order) — PRIMARY source
-///        BSTOCK_POOLS       comma-separated bStock/USDT PancakeSwap V3 pool addresses (same order) — TWAP
-///      Optional env (sane defaults):
+///      Primary source (choose one):
+///        VENUS_RESILIENT_ORACLE  Venus ResilientOracle (BNB: 0x6592b5DE802159F3E74B2486b091D11a8256ab8A)
+///        CHAINLINK_FEEDS    comma-separated Chainlink aggregator addresses (same order) — standard feeds only
+///      Optional env:
+///        BSTOCK_POOLS       comma-separated V3 pool addresses (same order); address(0) => Chainlink-only.
+///                           Omit entirely for an all-Chainlink-only batch (e.g. the Titans launch set).
 ///        TWAP_WINDOW=1800  MAX_STALENESS=86400  MAX_CLOSED_STALENESS=604800
 ///        MAX_DEVIATION_BPS=500  MAX_DRIFT_BPS=1000
 ///
@@ -54,10 +71,18 @@ contract OnboardAssets is Script {
         DepegMonitor depeg = DepegMonitor(vm.envOr("DEPEG_MONITOR", DEPEG_DEFAULT));
 
         address[] memory tokens = vm.envAddress("BSTOCK_TOKENS", ",");
-        address[] memory feeds = vm.envAddress("CHAINLINK_FEEDS", ",");
-        address[] memory pools = vm.envAddress("BSTOCK_POOLS", ",");
+        // PRIMARY source mode:
+        //   - VENUS_RESILIENT_ORACLE set  => price each bStock through Venus's ResilientOracle (the
+        //     authorized reader of the access-gated bStock Chainlink SingleFeeds). CHAINLINK_FEEDS unused.
+        //   - otherwise                   => wrap each raw CHAINLINK_FEEDS[i] in a ChainlinkAdapter (only
+        //     works for standard aggregators that permit contract reads).
+        IVenusOracle venus = IVenusOracle(vm.envOr("VENUS_RESILIENT_ORACLE", address(0)));
+        address[] memory feeds =
+            address(venus) == address(0) ? vm.envAddress("CHAINLINK_FEEDS", ",") : new address[](tokens.length);
+        // Pools are OPTIONAL. Omit for an all-Chainlink-only batch; any address(0) entry is Chainlink-only.
+        address[] memory pools = vm.envOr("BSTOCK_POOLS", ",", new address[](0));
         require(tokens.length == feeds.length, "tokens/feeds length mismatch");
-        require(tokens.length == pools.length, "tokens/pools length mismatch");
+        require(pools.length == 0 || pools.length == tokens.length, "tokens/pools length mismatch");
         require(tokens.length > 0, "no assets");
 
         uint32 window = uint32(vm.envOr("TWAP_WINDOW", uint256(1800)));
@@ -66,22 +91,30 @@ contract OnboardAssets is Script {
         uint32 maxDeviationBps = uint32(vm.envOr("MAX_DEVIATION_BPS", uint256(500)));
         uint32 maxDriftBps = uint32(vm.envOr("MAX_DRIFT_BPS", uint256(1000)));
 
-        uint256 pk = vm.envUint("PRIVATE_KEY");
-        vm.startBroadcast(pk);
+        vm.startBroadcast(vm.envUint("PRIVATE_KEY"));
 
         for (uint256 i; i < tokens.length; ++i) {
             address token = tokens[i];
+            address pool = pools.length == 0 ? address(0) : pools[i];
 
-            // PRIMARY: Chainlink fair value.
-            ChainlinkAdapter primary = new ChainlinkAdapter(IAggregatorV3(feeds[i]));
-            // SECONDARY / DEX: PancakeSwap V3 TWAP (deviation sanity-check + depeg DEX side).
-            PancakeV3TwapAdapter twap = new PancakeV3TwapAdapter(pools[i], token, window);
+            // PRIMARY: Chainlink fair value — read via Venus's authorized ResilientOracle for bStocks whose
+            // raw SingleFeed is access-gated, or directly for standard aggregators.
+            IOracleAdapter primary = address(venus) != address(0)
+                ? IOracleAdapter(address(new VenusOracleAdapter(venus, token)))
+                : IOracleAdapter(address(new ChainlinkAdapter(IAggregatorV3(feeds[i]))));
+
+            IOracleAdapter secondary = IOracleAdapter(address(0));
+            if (pool != address(0)) {
+                // SECONDARY / DEX: PancakeSwap V3 TWAP (deviation sanity-check + legacy depeg DEX side).
+                PancakeV3TwapAdapter twap = new PancakeV3TwapAdapter(pool, token, window);
+                secondary = IOracleAdapter(address(twap));
+            }
 
             oracle.configureAsset(
                 token,
                 NAVOracle.AssetConfig({
-                    primary: IOracleAdapter(address(primary)),
-                    secondary: IOracleAdapter(address(twap)),
+                    primary: primary,
+                    secondary: secondary,
                     maxStaleness: maxStaleness,
                     maxClosedStaleness: maxClosedStaleness,
                     maxDeviationBps: maxDeviationBps,
@@ -90,15 +123,21 @@ contract OnboardAssets is Script {
                 })
             );
 
-            // The TWAP is the depeg breaker's DEX side: market (TWAP) vs fair value (Chainlink).
-            depeg.setDexSource(token, IOracleAdapter(address(twap)));
+            // Only wire the legacy DepegMonitor DEX side when a real pool exists. Chainlink-only assets are
+            // gated by the ChainlinkOnlyDepegMonitor instead (wired into the factory by ConfigureProtocol).
+            if (pool != address(0)) {
+                depeg.setDexSource(token, secondary);
+            }
 
             // TODO(integration): replace with Binance's real proof-of-collateral feed.
             poc.attest(token, FULL_BACKING_BPS, keccak256(abi.encodePacked("manual-100pct", token)));
 
             console2.log("Onboarded", token);
-            console2.log("  chainlink (primary)", address(primary));
-            console2.log("  twap (secondary/dex)", address(twap));
+            console2.log(
+                address(venus) != address(0) ? "  primary: VenusOracleAdapter" : "  primary: ChainlinkAdapter",
+                address(primary)
+            );
+            console2.log(pool == address(0) ? "  mode: CHAINLINK-ONLY (no DEX secondary)" : "  mode: TWAP cross-check");
         }
 
         vm.stopBroadcast();
