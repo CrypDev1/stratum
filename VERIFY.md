@@ -1,6 +1,12 @@
 # Contract verification (BNB mainnet, chainId 56)
 
-Covers the **additive contracts** deployed for the Titans launch. Compiler settings are read from
+## ✅ STATUS: all verified (2026-07-01)
+Every contract is verified on BscScan via Etherscan V2: the **13 original core** contracts + the **8 additive
+Titans** contracts. TTAN `0x5479Bd2871c644622882B8f7f933D8084c274733` is an EIP-1167 clone and BscScan now
+resolves it to the verified `IndexPortfolio` implementation (`getsourcecode` → ContractName: IndexPortfolio).
+Re-running `make verify-all` is idempotent (already-verified contracts are skipped).
+
+Covers the **full deployment (original core + additive Titans)**. Compiler settings are read from
 `foundry.toml` automatically (solc 0.8.26, `via_ir=true`, `optimizer_runs=200`, `evm_version=cancun`) — they
 must match exactly, which they do when you run `forge verify-contract` from this repo.
 
