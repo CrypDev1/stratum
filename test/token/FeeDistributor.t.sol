@@ -20,7 +20,7 @@ contract FeeDistributorTest is Test {
 
     function setUp() public {
         vm.warp(1_700_000_000);
-        strat = new STRAT(admin, 1_000_000_000e18, 1_000_000e18);
+        strat = new STRAT(admin, 1_000_000e18);
         ve = new veSTRAT(IERC20(address(strat)));
         usdc = new MockERC20("USDC", "USDC", 18);
         dist = new FeeDistributor(ve, IERC20(address(usdc)));

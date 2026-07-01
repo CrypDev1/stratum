@@ -16,8 +16,8 @@ contract EmissionsTest is Test {
 
     function setUp() public {
         vm.warp(1_700_000_000);
-        strat = new STRAT(admin, CAP, 100_000_000e18); // 100M initial
-        minter = new EmissionsMinter(admin, strat, RATE);
+        strat = new STRAT(admin, 100_000_000e18); // 100M initial
+        minter = new EmissionsMinter(admin, strat, RATE, CAP); // generous max for the rate-mechanics tests
         strat.grantRole(strat.MINTER(), address(minter));
     }
 

@@ -14,6 +14,9 @@ contract EmissionsMinter is AccessControl {
 
     /// @notice The STRAT token.
     STRAT public immutable strat;
+    /// @notice Hard cap on lifetime emissions from this minter (the community-emissions allocation).
+    /// @dev Total emitted can never exceed this, independent of rate or elapsed time.
+    uint256 public immutable maxEmissions;
     /// @notice Emission rate in tokens per second.
     uint256 public ratePerSecond;
     /// @notice Timestamp emissions were last minted.
@@ -26,9 +29,11 @@ contract EmissionsMinter is AccessControl {
 
     error ZeroAddress();
 
-    constructor(address admin, STRAT strat_, uint256 ratePerSecond_) {
+    /// @param maxEmissions_ Lifetime emissions ceiling (e.g. 300,000,000 STRAT for the 12-month schedule).
+    constructor(address admin, STRAT strat_, uint256 ratePerSecond_, uint256 maxEmissions_) {
         if (address(strat_) == address(0)) revert ZeroAddress();
         strat = strat_;
+        maxEmissions = maxEmissions_;
         ratePerSecond = ratePerSecond_;
         lastMint = block.timestamp;
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
@@ -44,9 +49,13 @@ contract EmissionsMinter is AccessControl {
         emit RateSet(ratePerSecond_);
     }
 
-    /// @notice Emissions accrued since the last mint.
-    function mintable() public view returns (uint256) {
-        return ratePerSecond * (block.timestamp - lastMint);
+    /// @notice Emissions accrued since the last mint, clipped to the remaining lifetime allocation.
+    /// @dev Once `totalEmitted` reaches `maxEmissions` this is always 0 — the schedule is complete and the
+    ///      full allocation has been distributed, never more.
+    function mintable() public view returns (uint256 amount) {
+        amount = ratePerSecond * (block.timestamp - lastMint);
+        uint256 remaining = maxEmissions - totalEmitted;
+        if (amount > remaining) amount = remaining;
     }
 
     /// @notice Mint accrued emissions to `to`.
