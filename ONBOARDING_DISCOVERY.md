@@ -11,12 +11,13 @@ Executed as admin `0x2e7FaF4a5c5705d87e7AB58c4a879D7F8aDb933C`. All three steps 
    - PancakeV3SwapAdapter `0x1D34D701358AAC012CD70C3786d23633F5E3F29C` (fees NVDAB=500, SPCXB=2500)
    - ChainlinkOnlyDepegMonitor `0x07Cb968907D81d6B2F3A192738BF58dF50fe3C39`
    - GaugeDistributor `0xE5B30CFf0108224aac528aaC5Bc2E9C515B8AFc8` (stage-5 bonus)
+   - EmissionsAutomation `0xEa73cE160aB8d5382dE802Ea113d2FD04e8e2787` (Chainlink upkeep target; holds EMISSIONS_ADMIN)
 3. **create-titans** — **Titans (TTAN) Index `0x5479Bd2871c644622882B8f7f933D8084c274733`**
    (share token `0x9377916612421DF7F6aA6d90A00156f3A2e8dE3e`), FixedWeightStrategy
    `0xe597A6C22A385A19C80B1515C5ED68532BB49E99`, NVDAB 40% / SPCXB 60%, quote USDT.
 
 Post-broadcast verification: `factory.isPortfolio(TTAN)=true`, `isTradingSafe(NVDAB/SPCXB)=true`,
-`navPerShare=1e18`. The index is ready for its first mint.
+`navPerShare=1e18`. **Seed mint done:** 25 USDT -> 24.775 TTAN (0.90% cost), holdings 40/60, navPerShare 1.0 (tx 0x5c64f59c28c0f46b3cce42c3fd4eba92559d8da5533caf3b601235cf714b91c9).
 
 ## Final launch decision
 - **Titans (TTAN)** = **NVDAB 40% / SPCXB 60%**, quoted in USDT, **zero-fee auto-rebalancing Index**

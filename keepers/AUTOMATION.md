@@ -17,22 +17,19 @@ SPCXB `0xbe9D156892E55e7154BcD3cB0FEA677F9D3103E1`.
 
 ## 1. Emissions → Chainlink Automation
 
-### a) Deploy the on-chain adapter (grants itself the mint role via your admin)
-`EmissionsAutomation` is a custom-logic upkeep target: `checkUpkeep` returns true once `mintable() > 0`
-(and ≥ `MIN_MINTABLE_WEI`); `performUpkeep` calls `EmissionsMinter.emitTo(recipient)` and then
-`GaugeDistributor.distribute()`. The script also grants it `EMISSIONS_ADMIN` on the minter.
+### a) Deploy the on-chain adapter — ✅ ALREADY DEPLOYED & WIRED
+`EmissionsAutomation` is live at **`0xEa73cE160aB8d5382dE802Ea113d2FD04e8e2787`** and already holds
+`EMISSIONS_ADMIN` on the minter (recipient = GaugeDistributor `0xE5B30CFf0108224aac528aaC5Bc2E9C515B8AFc8`).
+`checkUpkeep` returns true once `mintable() > 0` (≥ `MIN_MINTABLE_WEI`); `performUpkeep` calls
+`EmissionsMinter.emitTo(recipient)` then `GaugeDistributor.distribute()`. Nothing more to deploy — go to (b).
 
-```bash
-# .env: PRIVATE_KEY (admin), GAUGE_DISTRIBUTOR=0xE5B30CFf0108224aac528aaC5Bc2E9C515B8AFc8
-# optional: EMISSIONS_RECIPIENT (default = GAUGE_DISTRIBUTOR), MIN_MINTABLE_WEI
-forge script script/RegisterKeepers.s.sol:RegisterKeepers --rpc-url bsc --broadcast -vvvv
-```
-Note the printed `EmissionsAutomation` address.
+(To redeploy/rotate it: `forge script script/RegisterKeepers.s.sol:RegisterKeepers --rpc-url bsc --broadcast`
+with `.env` `PRIVATE_KEY` + `GAUGE_DISTRIBUTOR`; it re-grants `EMISSIONS_ADMIN`.)
 
 ### b) Register the upkeep
 Go to **https://automation.chain.link** → connect the admin wallet → **Register new Upkeep** →
 **Custom logic** →
-- Target contract address: the `EmissionsAutomation` address from (a)
+- Target contract address: **`0xEa73cE160aB8d5382dE802Ea113d2FD04e8e2787`**
 - Gas limit: `500000`
 - Starting balance: **5 LINK** (see funding below)
 - Check data: `0x` (empty)
