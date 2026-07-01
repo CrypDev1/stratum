@@ -1,7 +1,22 @@
 # "Titans" (TTAN) Onboarding — On-Chain Discovery & Simulation (BNB mainnet, chainId 56)
 
-All data read live via `cast`/forge fork against BNB mainnet. No websites scraped. No transactions
-broadcast (waiting on your "GO" — Gate 2).
+All data read live via `cast`/forge fork against BNB mainnet. No websites scraped.
+
+## ✅ BROADCAST — LIVE on BNB mainnet (chainId 56)
+Executed as admin `0x2e7FaF4a5c5705d87e7AB58c4a879D7F8aDb933C`. All three steps succeeded on-chain:
+1. **onboard-assets** — NVDAB + SPCXB configured on the live NAVOracle (VenusOracleAdapter primary,
+   secondary disabled) + 100% PoC attestations. Adapters: NVDAB `0x8E00AAADDC258d8F081571D29A9656aD96f4f6b8`,
+   SPCXB `0x432A4FBdFb65a43B42262726137F428E40f46767`.
+2. **configure-protocol** — deployed + wired into the live factory:
+   - PancakeV3SwapAdapter `0x1D34D701358AAC012CD70C3786d23633F5E3F29C` (fees NVDAB=500, SPCXB=2500)
+   - ChainlinkOnlyDepegMonitor `0x07Cb968907D81d6B2F3A192738BF58dF50fe3C39`
+   - GaugeDistributor `0xE5B30CFf0108224aac528aaC5Bc2E9C515B8AFc8` (stage-5 bonus)
+3. **create-titans** — **Titans (TTAN) Index `0x5479Bd2871c644622882B8f7f933D8084c274733`**
+   (share token `0x9377916612421DF7F6aA6d90A00156f3A2e8dE3e`), FixedWeightStrategy
+   `0xe597A6C22A385A19C80B1515C5ED68532BB49E99`, NVDAB 40% / SPCXB 60%, quote USDT.
+
+Post-broadcast verification: `factory.isPortfolio(TTAN)=true`, `isTradingSafe(NVDAB/SPCXB)=true`,
+`navPerShare=1e18`. The index is ready for its first mint.
 
 ## Final launch decision
 - **Titans (TTAN)** = **NVDAB 40% / SPCXB 60%**, quoted in USDT, **zero-fee auto-rebalancing Index**
