@@ -1,6 +1,7 @@
 .PHONY: build test fmt snapshot coverage deploy-testnet clean \
 	onboard-assets configure-protocol seed-perp create-gauge create-titans \
-	onboard-assets-dry configure-protocol-dry create-titans-dry titans-sim
+	onboard-assets-dry configure-protocol-dry create-titans-dry titans-sim \
+	verify-args verify-all verify-sourcify
 
 build:
 	forge build
@@ -52,3 +53,11 @@ create-titans-dry:
 # ── Full end-to-end fork simulation incl. a real mint (onboard -> wire -> create TTAN -> mint) ──
 titans-sim:
 	FORK_RPC=$${FORK_RPC:-https://bsc-dataseed.bnbchain.org} forge test --match-path test/Titans.fork.t.sol -vv
+
+# ── Contract verification (see VERIFY.md). verify-all needs a BSC-covered Etherscan plan; verify-sourcify is free ──
+verify-args:
+	./script/verify.sh args
+verify-all:
+	./script/verify.sh etherscan
+verify-sourcify:
+	./script/verify.sh sourcify

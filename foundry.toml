@@ -27,5 +27,9 @@ bsc = "${BSC_RPC_URL}"
 bsc_testnet = "${BSC_TESTNET_RPC_URL}"
 
 [etherscan]
-bsc = { key = "${BSCSCAN_API_KEY}", url = "https://api.bscscan.com/api" }
+# Etherscan V2 unified endpoint (the old api.bscscan.com V1 API is deprecated). NOTE: BSC (chainid 56)
+# verification via this API requires a PAID Etherscan plan; a free key returns "Free API access is not
+# supported for this chain." Free alternatives that work from Codespaces: `--verifier sourcify`, or the
+# BscScan web UI with `forge verify-contract --show-standard-json-input`. See VERIFY.md.
+bsc = { key = "${BSCSCAN_API_KEY}", url = "https://api.etherscan.io/v2/api?chainid=56", chain = 56 }
 bsc_testnet = { key = "${BSCSCAN_API_KEY}", url = "https://api-testnet.bscscan.com/api" }
