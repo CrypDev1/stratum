@@ -39,13 +39,22 @@ contract DeployEarn is Script {
         address listaVault = vm.envOr("LISTA_VAULT", address(0));
         uint256 blocksPerYear = vm.envOr("BLOCKS_PER_YEAR", uint256(10_512_000));
 
+        address existingFactory = vm.envOr("EARN_VAULT_FACTORY", address(0));
+
         vm.startBroadcast();
 
-        // 1. Implementation + clone factory (mirrors the core PortfolioFactory pattern).
-        EarnVault impl = new EarnVault();
-        EarnVaultFactory factory = new EarnVaultFactory(admin, address(impl));
-        console2.log("EarnVault implementation:", address(impl));
-        console2.log("EarnVaultFactory:", address(factory));
+        // 1. Implementation + clone factory (mirrors the core PortfolioFactory pattern). Reuse a prior
+        //    factory via EARN_VAULT_FACTORY to add another vault/venue without redeploying infra.
+        EarnVaultFactory factory;
+        if (existingFactory != address(0)) {
+            factory = EarnVaultFactory(existingFactory);
+            console2.log("Reusing EarnVaultFactory:", existingFactory);
+        } else {
+            EarnVault impl = new EarnVault();
+            factory = new EarnVaultFactory(admin, address(impl));
+            console2.log("EarnVault implementation:", address(impl));
+            console2.log("EarnVaultFactory:", address(factory));
+        }
 
         // 2. First vault for the base asset.
         address vault = factory.createVault(stable, vaultName, vaultSymbol, admin);
